@@ -156,53 +156,108 @@ def get_floor_corners(mask):
     return np.float32(pts)
 
 
-def apply_tile_realistic(room_bgr, floor_mask, tile_bgr, rotation_angle=20):
+def apply_tile_realistic(room_bgr, floor_mask, tile_bgr, rotation_angle=10, outdir=None):
     h, w = room_bgr.shape[:2]
+
+    # ===== STEP 1: Floor mask (already detected, clean it) =====
     mask = (floor_mask > 0).astype(np.uint8) * 255
+    print(f"  Step 1: Floor mask detected ({mask.sum() // 255} floor pixels)")
 
+    # Save floor mask for debugging
+    if outdir:
+        cv2.imwrite(str(outdir / "debug_1_floor_mask.png"), mask)
+
+    # ===== STEP 2: Create perspective-angled tile grid filling entire image =====
+    # Strategy: build a large flat tile grid, then use the INVERSE of the
+    # floor-perspective transform to remap every output pixel back into
+    # the tile pattern.  This guarantees the full image is filled with
+    # perspective-correct tiles — no black areas.
+
+    # 2a. Build an oversized flat tile pattern (rotated)
+    scale = 4  # how many times bigger than the image
+    big_w, big_h = w * scale, h * scale
+    tile_pattern = create_tile_pattern(big_w, big_h, tile_bgr)
+
+    # Apply rotation to the flat pattern
+    center_rot = (big_w // 2, big_h // 2)
+    rot_mat = cv2.getRotationMatrix2D(center_rot, rotation_angle, 1.0)
+    tile_pattern = cv2.warpAffine(tile_pattern, rot_mat, (big_w, big_h),
+                                  borderMode=cv2.BORDER_REFLECT)
+
+    # 2b. Compute perspective mapping from floor corners
     dst_pts = get_floor_corners(mask)
-    if dst_pts is None:
-        return room_bgr
+    if dst_pts is not None:
+        # Source quad: center region of the big pattern, sized to image
+        ox = (big_w - w) // 2
+        oy = (big_h - h) // 2
+        src_quad = np.float32([
+            [ox, oy], [ox + w, oy], [ox + w, oy + h], [ox, oy + h]
+        ])
+        # Perspective matrix: maps src_quad -> floor corners in output
+        M = cv2.getPerspectiveTransform(src_quad, dst_pts)
+        # INVERSE: for each output pixel, find where it comes from in tile_pattern
+        M_inv = np.linalg.inv(M)
 
-    original_flat_w = 1200
-    original_flat_h = 1200
-    expanded_dim = int(np.ceil(np.sqrt(original_flat_w**2 + original_flat_h**2)))
+        # Build remap coordinates for every output pixel
+        ys, xs = np.mgrid[0:h, 0:w].astype(np.float32)
+        ones = np.ones_like(xs)
+        coords = np.stack([xs, ys, ones], axis=-1)  # (h, w, 3)
+        # Apply inverse perspective
+        src_coords = coords @ M_inv.T  # (h, w, 3)
+        # Normalize homogeneous coordinates
+        src_coords[:, :, 0] /= src_coords[:, :, 2]
+        src_coords[:, :, 1] /= src_coords[:, :, 2]
+        map_x = src_coords[:, :, 0].astype(np.float32)
+        map_y = src_coords[:, :, 1].astype(np.float32)
 
-    tile_pattern = create_tile_pattern(expanded_dim, expanded_dim, tile_bgr)
+        # Clamp to tile_pattern bounds so no black
+        map_x = np.clip(map_x, 0, big_w - 1)
+        map_y = np.clip(map_y, 0, big_h - 1)
 
-    offset_x = (expanded_dim - original_flat_w) / 2
-    offset_y = (expanded_dim - original_flat_h) / 2
+        full_tile_image = cv2.remap(tile_pattern, map_x, map_y,
+                                    cv2.INTER_LINEAR, borderMode=cv2.BORDER_REFLECT)
+    else:
+        # Fallback: just crop center of rotated pattern
+        ox = (big_w - w) // 2
+        oy = (big_h - h) // 2
+        full_tile_image = tile_pattern[oy:oy + h, ox:ox + w]
 
-    src_pts = np.float32(
-        [
-            [offset_x, offset_y],
-            [offset_x + original_flat_w, offset_y],
-            [offset_x + original_flat_w, offset_y + original_flat_h],
-            [offset_x, offset_y + original_flat_h],
-        ]
-    )
-
-    center_x = np.mean(src_pts[:, 0])
-    center_y = np.mean(src_pts[:, 1])
-    rotation_matrix = cv2.getRotationMatrix2D((center_x, center_y), rotation_angle, 1.0)
-
-    rotated_src_pts = cv2.transform(src_pts.reshape(-1, 1, 2), rotation_matrix).reshape(-1, 2)
-    h_matrix = cv2.getPerspectiveTransform(rotated_src_pts, dst_pts)
-    warped_tiles = cv2.warpPerspective(tile_pattern, h_matrix, (w, h))
-
+    # Apply lighting from original room for realism
     gray = cv2.cvtColor(room_bgr, cv2.COLOR_BGR2GRAY)
     lighting = cv2.GaussianBlur(gray, (31, 31), 0) / 255.0
     lighting = 0.6 + 0.4 * lighting
 
-    realistic_tiles = warped_tiles.astype(np.float32) * lighting[:, :, None]
-    realistic_tiles = np.clip(realistic_tiles, 0, 255).astype(np.uint8)
+    full_tile_image = (full_tile_image.astype(np.float32) * lighting[:, :, None])
+    full_tile_image = np.clip(full_tile_image, 0, 255).astype(np.uint8)
 
-    mask_blur = cv2.GaussianBlur(mask, (21, 21), 0)
-    mask_norm = mask_blur / 255.0
-    mask_3 = np.stack([mask_norm] * 3, axis=-1)
+    print(f"  Step 2: Full perspective tile grid created ({w}x{h})")
 
-    result = room_bgr * (1 - mask_3) + realistic_tiles * mask_3
-    return result.astype(np.uint8)
+    # Save full tile grid for debugging
+    if outdir:
+        cv2.imwrite(str(outdir / "debug_2_full_tile_grid.png"), full_tile_image)
+
+    # ===== STEP 3: Cut non-floor from room, paste on top of tile grid =====
+    # Non-floor mask = everything that is NOT floor (walls, furniture, objects)
+    non_floor_mask = 255 - mask  # invert: floor=0, non-floor=255
+
+    # Save the cut-out (room without floor) for debugging
+    if outdir:
+        room_cutout = room_bgr.copy()
+        room_cutout[mask > 0] = 0  # black out the floor
+        cv2.imwrite(str(outdir / "debug_3_room_without_floor.png"), room_cutout)
+
+    # Feather the edges for smooth blending at boundaries
+    non_floor_smooth = cv2.GaussianBlur(non_floor_mask, (11, 11), 0)
+    alpha = non_floor_smooth.astype(np.float32) / 255.0
+    alpha_3 = np.stack([alpha] * 3, axis=-1)
+
+    # Final: tile grid as base, paste non-floor room on top
+    result = (full_tile_image * (1.0 - alpha_3) + room_bgr * alpha_3)
+    result = np.clip(result, 0, 255).astype(np.uint8)
+
+    print(f"  Step 3: Pasted room (without floor) on top of tile grid")
+
+    return result
 
 
 def main():
@@ -234,7 +289,7 @@ def main():
     else:
         room_bgr = cv2.cvtColor(np.array(room_image), cv2.COLOR_RGB2BGR)
         tile_bgr = cv2.cvtColor(np.array(tile_image), cv2.COLOR_RGB2BGR)
-        result_bgr = apply_tile_realistic(room_bgr, floor_mask, tile_bgr, rotation_angle=args.rotation)
+        result_bgr = apply_tile_realistic(room_bgr, floor_mask, tile_bgr, rotation_angle=args.rotation, outdir=outdir)
         cv2.imwrite(str(outdir / "tile_applied_realistic.png"), result_bgr)
         print(f"Saved realistic result to: {(outdir / 'tile_applied_realistic.png').resolve()}")
 
