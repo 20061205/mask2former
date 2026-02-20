@@ -1,0 +1,14 @@
+outputs
+.mask  
+./.vscode
+./.idea
+./.pytest_cache
+./.mypy_cache
+./.ipynb_checkpoints
+./.DS_Store
+./__pycache__
+./*.pyc
+./*.pyo
+rooms
+./logs
+tiles
