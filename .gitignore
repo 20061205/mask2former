@@ -6,7 +6,7 @@ outputs
 ./.mypy_cache
 ./.ipynb_checkpoints
 ./.DS_Store
-./__pycache__
+__pycache__
 ./*.pyc
 ./*.pyo
 rooms
