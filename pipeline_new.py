@@ -29,7 +29,7 @@ import matplotlib.pyplot as plt
 import numpy as np
 from PIL import Image
 
-from config import SURFACE_IDS, DEFAULT_SURFACES, DEFAULT_ROTATION_ANGLE
+from config import SURFACE_IDS, DEFAULT_SURFACES, DEFAULT_ROTATION_ANGLE, DEFAULT_TILE_SIZE, DEFAULT_GROUT_WIDTH
 from model import load_model, segment_image
 from surfaces import extract_all_masks, combine_masks
 from tile_engine import build_full_tile_grid, composite_tile_on_surface
@@ -87,6 +87,16 @@ def main():
                         help="Save intermediate debug images")
     parser.add_argument("--list-surfaces", action="store_true",
                         help="Print available surface names and exit")
+    parser.add_argument("--tile_size", type=int, default=DEFAULT_TILE_SIZE,
+                    help="Tile size in pixels")
+    parser.add_argument("--tile_width", type=int, default=None,
+                    help="Tile width in pixels (overrides tile_size if specified)")
+    parser.add_argument("--tile_height", type=int, default=None, 
+                    help="Tile height in pixels (overrides tile_size if specified)")
+    parser.add_argument("--grout_width", type=int, default=DEFAULT_GROUT_WIDTH,
+                    help="Grout width in pixels")
+    parser.add_argument("--tile_orientation", choices=["vertical", "horizontal"], default="horizontal",
+                    help="Tile orientation: vertical or horizontal grout lines")
     args = parser.parse_args()
 
     # ── List surfaces ────────────────────────────────────────────────
@@ -130,6 +140,12 @@ def main():
     full_tile = build_full_tile_grid(
         room_bgr, combined_mask, tile_bgr,
         rotation_angle=args.rotation,
+        tile_size=args.tile_size,
+        grout=args.grout_width,
+        tile_width=args.tile_width,
+        tile_height=args.tile_height,
+        orientation=args.tile_orientation,
+        surface_name=args.surfaces[0] if args.surfaces else "wall",
     )
 
     if args.debug:

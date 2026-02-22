@@ -14,7 +14,7 @@ def load_model(model_name: str = MODEL_NAME):
     """Load Mask2Former model and processor."""
     processor = AutoImageProcessor.from_pretrained(model_name)
     model = Mask2FormerForUniversalSegmentation.from_pretrained(model_name)
-    device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+    device = torch.device("cpu")  # Force CPU to avoid CUDA out of memory
     model.to(device)
     model.eval()
     print(f"Model loaded on {device}")
