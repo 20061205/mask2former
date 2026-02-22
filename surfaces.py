@@ -26,8 +26,14 @@ def extract_surface_mask(segmentation_map: np.ndarray, surface_name: str) -> np.
             f"Unknown surface '{surface_name}'. "
             f"Available: {list(SURFACE_IDS.keys())}"
         )
-    label_id = SURFACE_IDS[surface_name]
-    return (segmentation_map == label_id).astype(np.uint8) * 255
+    label_ids = SURFACE_IDS[surface_name]
+    # Support a single int or a list of ints
+    if isinstance(label_ids, int):
+        label_ids = [label_ids]
+    mask = np.zeros_like(segmentation_map, dtype=np.uint8)
+    for lid in label_ids:
+        mask[segmentation_map == lid] = 1
+    return (mask * 255).astype(np.uint8)
 
 
 def clean_mask(mask: np.ndarray,

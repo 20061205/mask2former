@@ -147,14 +147,59 @@ def build_full_tile_grid(room_bgr: np.ndarray,
         oy = (big_h - h) // 2
         full_tile = tile_pattern[oy:oy + h, ox:ox + w]
 
-    # 3. Apply room lighting
-    gray = cv2.cvtColor(room_bgr, cv2.COLOR_BGR2GRAY)
-    lighting = cv2.GaussianBlur(gray, (31, 31), 0) / 255.0
-    lighting = 0.6 + 0.4 * lighting
-    full_tile = np.clip(full_tile.astype(np.float32) * lighting[:, :, None],
-                        0, 255).astype(np.uint8)
+    # 3. Transfer the room's lighting / shadows onto the tile
+    full_tile = transfer_room_lighting(room_bgr, full_tile)
 
     return full_tile
+
+
+def transfer_room_lighting(room_bgr: np.ndarray,
+                           tile_bgr: np.ndarray) -> np.ndarray:
+    """
+    Transfer the original room image's lighting, shadows, and
+    reflections onto the tile grid using LAB-space luminance matching.
+
+    Steps
+    -----
+    1. Convert both to LAB colour space.
+    2. Extract room's L channel (brightness map).
+    3. Build a *lighting ratio* from the room's low-freq brightness.
+    4. Multiply tile's L channel by the ratio → preserves original
+       light gradients, shadows, and specular highlights.
+    5. Blend a high-frequency detail layer from the room to add
+       subtle surface reflections and micro-shadows.
+    """
+    h, w = room_bgr.shape[:2]
+    tile_bgr = tile_bgr[:h, :w]   # safety crop
+
+    room_lab = cv2.cvtColor(room_bgr, cv2.COLOR_BGR2LAB).astype(np.float32)
+    tile_lab = cv2.cvtColor(tile_bgr, cv2.COLOR_BGR2LAB).astype(np.float32)
+
+    room_L = room_lab[:, :, 0]
+    tile_L = tile_lab[:, :, 0]
+
+    # Low-frequency lighting envelope from the room
+    room_L_blur = cv2.GaussianBlur(room_L, (61, 61), 0)
+    tile_L_blur = cv2.GaussianBlur(tile_L, (61, 61), 0)
+
+    # Lighting ratio: how much brighter/darker is each room pixel vs average
+    tile_L_blur[tile_L_blur < 1] = 1
+    ratio = room_L_blur / tile_L_blur
+    ratio = np.clip(ratio, 0.3, 2.5)
+
+    # Apply lighting ratio to tile
+    tile_L_lit = tile_L * ratio
+
+    # High-frequency detail from room (micro-shadows, reflections)
+    room_detail = room_L - room_L_blur
+    detail_strength = 0.35
+    tile_L_lit = tile_L_lit + room_detail * detail_strength
+
+    tile_L_lit = np.clip(tile_L_lit, 0, 255)
+    tile_lab[:, :, 0] = tile_L_lit
+
+    result = cv2.cvtColor(tile_lab.astype(np.uint8), cv2.COLOR_LAB2BGR)
+    return result
 
 
 # ── Compositing ──────────────────────────────────────────────────────
@@ -164,13 +209,54 @@ def composite_tile_on_surface(room_bgr: np.ndarray,
                               full_tile_image: np.ndarray,
                               feather_radius: int = 11) -> np.ndarray:
     """
-    Composite: tile grid is the base layer, then the non-surface parts
-    of the room image are pasted on top with feathered edges.
+    Realistic composite:
+      1. Feathered alpha along mask edges for smooth transition.
+      2. Shadow darkening near edges to preserve 3D depth / corners.
+      3. Specular highlight preservation from the original room.
     """
-    non_surface = 255 - surface_mask
-    non_surface_smooth = cv2.GaussianBlur(non_surface, (feather_radius, feather_radius), 0)
-    alpha = non_surface_smooth.astype(np.float32) / 255.0
-    alpha_3 = np.stack([alpha] * 3, axis=-1)
+    h, w = room_bgr.shape[:2]
 
-    result = full_tile_image * (1.0 - alpha_3) + room_bgr * alpha_3
+    # ── 1. Feathered alpha mask ──────────────────────────────────────
+    #  Use distance transform for smooth, natural-looking falloff
+    binary = (surface_mask > 0).astype(np.uint8)
+    dist = cv2.distanceTransform(binary, cv2.DIST_L2, 5)
+    # Feather zone: pixels within feather_radius of the edge blend
+    feather = np.clip(dist / max(feather_radius, 1), 0.0, 1.0)
+    # Slight Gaussian smooth on top for extra softness
+    feather = cv2.GaussianBlur(feather.astype(np.float32), (5, 5), 0)
+
+    # ── 2. Edge shadow / 3D depth preservation ───────────────────────
+    #  Darken tiles near mask edges → simulates the shadow at corners
+    #  where the countertop meets the vertical face.
+    shadow_width = max(feather_radius * 2, 15)
+    shadow_zone = np.clip(dist / shadow_width, 0.0, 1.0)
+    # Shadow factor: darkest at the very edge, normal further in
+    shadow_factor = 0.65 + 0.35 * shadow_zone   # 0.65 at edge → 1.0 inside
+    shadow_factor3 = np.stack([shadow_factor] * 3, axis=-1)
+
+    tile_shadowed = np.clip(
+        full_tile_image.astype(np.float32) * shadow_factor3, 0, 255
+    ).astype(np.uint8)
+
+    # ── 3. Specular / highlight preservation ─────────────────────────
+    #  Keep bright specular spots from the original room so reflections
+    #  look natural (e.g. light glinting off a polished surface).
+    room_gray = cv2.cvtColor(room_bgr, cv2.COLOR_BGR2GRAY).astype(np.float32)
+    tile_gray = cv2.cvtColor(tile_shadowed, cv2.COLOR_BGR2GRAY).astype(np.float32)
+
+    # Detect strong highlights in the original room
+    highlight_thresh = np.percentile(room_gray[binary > 0], 92) if binary.sum() > 0 else 230
+    highlight_mask = (room_gray > highlight_thresh).astype(np.float32)
+    highlight_mask = cv2.GaussianBlur(highlight_mask, (11, 11), 0)
+
+    # Blend highlights: where original was very bright, let some of that through
+    highlight_strength = 0.3
+    blended = tile_shadowed.astype(np.float32) * (1.0 - highlight_mask[:, :, None] * highlight_strength) + \
+              room_bgr.astype(np.float32) * (highlight_mask[:, :, None] * highlight_strength)
+    blended = np.clip(blended, 0, 255).astype(np.uint8)
+
+    # ── 4. Final composite ───────────────────────────────────────────
+    alpha_3 = np.stack([feather] * 3, axis=-1)
+    result = blended.astype(np.float32) * alpha_3 + room_bgr.astype(np.float32) * (1.0 - alpha_3)
+
     return np.clip(result, 0, 255).astype(np.uint8)
