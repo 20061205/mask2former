@@ -11,7 +11,8 @@ SURFACE_IDS = {
     "floor":      3,
     "wall":       0,
     "countertop": 70,   # kitchen countertop / pantry surface
-    "stairway":   53,   # stairs / staircase
+    "stairway":   53,   # stairs / staircase (original ADE20K)
+    "screen":     59,   # screen - actually identifies stairways in this model
     "cabinet":    10,   # kitchen cabinet fronts
     "ceiling":    5,
     "table":      15,
