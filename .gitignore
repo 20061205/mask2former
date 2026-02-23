@@ -12,3 +12,5 @@ __pycache__
 rooms
 ./logs
 tiles
+countertops/masks
+countertops/model_final.pth
