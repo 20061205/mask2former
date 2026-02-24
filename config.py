@@ -24,7 +24,7 @@ DEFAULT_SURFACES = ["floor"]
 # ── Tile engine defaults ─────────────────────────────────────────────
 DEFAULT_TILE_SIZE = 120
 DEFAULT_GROUT_WIDTH = 3
-DEFAULT_ROTATION_ANGLE = 10.0
+DEFAULT_ROTATION_ANGLE = 0.0
 TILE_GRID_SCALE = 3        # oversized pattern multiplier
 
 # ── Countertop-specific defaults ─────────────────────────────────────

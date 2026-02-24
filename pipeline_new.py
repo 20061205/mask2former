@@ -2,20 +2,22 @@
 CLI entry-point for Mask2Former tile visualisation.
 
 Supports multiple surfaces: floor, wall, countertop, stairway, cabinet, etc.
+Supports real-world dimension-aware tile count (floor area + tile size → exact grid).
 
 Usage examples
 --------------
   # Tile the floor only (default)
   python pipeline.py --room room.jpg --tile tile.jpg
 
+  # Tile floor with real-world dimensions (10'×12' room, 24"×24" tiles → 60 tiles)
+  python pipeline.py --room room.jpg --tile tile.jpg \\
+      --floor-width 10 --floor-length 12 --tile-width 24 --tile-height 24
+
   # Tile floor + stairway
   python pipeline.py --room room.jpg --tile tile.jpg --surfaces floor stairway
 
   # Tile kitchen countertop
   python pipeline.py --room kitchen.jpg --tile marble.jpg --surfaces countertop
-
-  # Tile floor and wall with different settings
-  python pipeline.py --room room.jpg --tile tile.jpg --surfaces floor wall --rotation 15
 
   # List all available surface names
   python pipeline.py --list-surfaces
@@ -32,7 +34,11 @@ from PIL import Image
 from config import SURFACE_IDS, DEFAULT_SURFACES, DEFAULT_ROTATION_ANGLE
 from model import load_model, segment_image
 from surfaces import extract_all_masks, combine_masks
-from tile_engine import build_full_tile_grid, composite_tile_on_surface
+from tile_engine import (
+    build_full_tile_grid,
+    composite_tile_on_surface,
+    calculate_tile_pixel_size,
+)
 
 
 # ── Debug / preview helpers ──────────────────────────────────────────
@@ -87,6 +93,16 @@ def main():
                         help="Save intermediate debug images")
     parser.add_argument("--list-surfaces", action="store_true",
                         help="Print available surface names and exit")
+
+    # ── Real-world dimension args ────────────────────────────────────
+    parser.add_argument("--floor-width", type=float, default=None,
+                        help="Real floor width in feet (e.g. 10)")
+    parser.add_argument("--floor-length", type=float, default=None,
+                        help="Real floor length in feet (e.g. 12)")
+    parser.add_argument("--tile-width", type=float, default=None,
+                        help="Single tile width in inches (e.g. 24)")
+    parser.add_argument("--tile-height", type=float, default=None,
+                        help="Single tile height in inches (e.g. 24)")
     args = parser.parse_args()
 
     # ── List surfaces ────────────────────────────────────────────────
@@ -126,10 +142,31 @@ def main():
     combined_mask = combine_masks(masks)
 
     # ── Build tile grid & composite ──────────────────────────────────
+    # Determine tile pixel size: from real-world dims or default
+    tile_w_px = None
+    tile_h_px = None
+
+    dim_args = (args.floor_width, args.floor_length,
+                args.tile_width, args.tile_height)
+    if all(d is not None for d in dim_args):
+        print("Computing tile size from real-world dimensions...")
+        tile_w_px, tile_h_px, n_across, n_down = calculate_tile_pixel_size(
+            combined_mask,
+            args.floor_width, args.floor_length,
+            args.tile_width, args.tile_height,
+        )
+        print(f"  Total tiles: ~{n_across * n_down} "
+              f"({n_across} × {n_down})")
+    elif any(d is not None for d in dim_args):
+        parser.error("Provide ALL four dimension args: "
+                     "--floor-width, --floor-length, --tile-width, --tile-height")
+
     print("Building tile grid...")
     full_tile = build_full_tile_grid(
         room_bgr, combined_mask, tile_bgr,
         rotation_angle=args.rotation,
+        tile_w=tile_w_px,
+        tile_h=tile_h_px,
     )
 
     if args.debug:
@@ -137,10 +174,16 @@ def main():
 
     result_bgr = composite_tile_on_surface(room_bgr, combined_mask, full_tile)
 
-    # ── Save ─────────────────────────────────────────────────────────
+    # ── Save (maximum quality) ────────────────────────────────────────
     out_name = "tile_applied_" + "_".join(args.surfaces) + ".png"
-    cv2.imwrite(str(outdir / out_name), result_bgr)
+    cv2.imwrite(str(outdir / out_name), result_bgr,
+                [cv2.IMWRITE_PNG_COMPRESSION, 3])   # 0-9; lower = bigger/faster
+    # Also save a high-quality JPEG for quick viewing
+    jpg_name = "tile_applied_" + "_".join(args.surfaces) + ".jpg"
+    cv2.imwrite(str(outdir / jpg_name), result_bgr,
+                [cv2.IMWRITE_JPEG_QUALITY, 97])
     print(f"Saved: {(outdir / out_name).resolve()}")
+    print(f"Saved: {(outdir / jpg_name).resolve()}")
     print(f"All outputs in: {outdir.resolve()}")
 
 
