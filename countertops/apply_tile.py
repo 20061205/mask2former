@@ -85,18 +85,16 @@ def main():
             raise FileNotFoundError(f"Cannot read mask: {args.mask}")
         print(f"Mask : {args.mask}  ({np.count_nonzero(mask)} white px)")
     elif args.live:
-        print("Generating combined mask (loading both models)...")
+        print("Generating SAM mask (Detectron2 + SAM)...")
         from .mask_generator import (
             build_predictor,
-            load_mask2former,
-            generate_combined_mask,
+            load_sam,
+            generate_sam_mask,
         )
         predictor = build_predictor(confidence=args.confidence)
-        m2f_proc, m2f_model, m2f_device = load_mask2former()
-        result = generate_combined_mask(
-            room_bgr, predictor, m2f_proc, m2f_model, m2f_device
-        )
-        mask = result["combined"]
+        sam_pred = load_sam()
+        result = generate_sam_mask(room_bgr, predictor, sam_pred)
+        mask = result["sam_mask"]
         print(f"Mask generated  ({np.count_nonzero(mask)} white px)")
 
         # Save the mask too

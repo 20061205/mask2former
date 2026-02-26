@@ -2,29 +2,21 @@
 Countertop mask generation using TWO models:
 
 1. Local Detectron2 Mask R-CNN  – instance segmentation (custom-trained)
-2. Mask2Former ADE20K           – semantic segmentation (pre-trained)
+2. SAM (Segment Anything)       – refines Detectron2 boxes into precise masks
 
-The final mask is produced by combining both:
-  final = (local_countertop  UNION  m2f_countertop)  MINUS  m2f_floor
-
-This removes floor false-positives from the local model and fills in
-areas under objects (which semantic segmentation covers but instance
-segmentation misses).
+Pipeline:  Detectron2 → bounding boxes → SAM → pixel-precise masks
 """
 
 import cv2
 import numpy as np
 import torch
 from pathlib import Path
-from PIL import Image
 
 from detectron2.config import get_cfg
 from detectron2 import model_zoo
 from detectron2.engine import DefaultPredictor
 from detectron2.utils.visualizer import Visualizer, ColorMode
 from detectron2.data import MetadataCatalog
-
-from transformers import AutoImageProcessor, Mask2FormerForUniversalSegmentation
 
 from .config import (
     MODEL_WEIGHTS,
@@ -33,9 +25,8 @@ from .config import (
     CONFIDENCE,
     CLASS_NAMES,
     TARGET_CLASSES,
-    M2F_MODEL_NAME,
-    M2F_INCLUDE_IDS,
-    M2F_FLOOR_ID,
+    SAM_CHECKPOINT,
+    SAM_MODEL_TYPE,
     MASK_KERNEL_SIZE,
     MASK_CLOSE_ITER,
 )
@@ -115,107 +106,114 @@ def clean_mask(
 
 
 # ─────────────────────────────────────────────────────────────────────
-# MASK2FORMER ADE20K  (pre-trained semantic segmentation)
+# SAM  (Segment Anything Model – box-prompted refinement)
 # ─────────────────────────────────────────────────────────────────────
 
-def load_mask2former(model_name: str = M2F_MODEL_NAME):
-    """Load the pre-trained Mask2Former ADE20K semantic model."""
-    processor = AutoImageProcessor.from_pretrained(model_name)
-    model = Mask2FormerForUniversalSegmentation.from_pretrained(model_name)
-    device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
-    model.to(device)
-    model.eval()
-    print(f"Mask2Former loaded  |  device={device}  |  model={model_name}")
-    return processor, model, device
-
-
-def m2f_segment(image_bgr: np.ndarray, processor, model, device) -> np.ndarray:
+def load_sam(
+    checkpoint: str | Path = SAM_CHECKPOINT,
+    model_type: str = SAM_MODEL_TYPE,
+):
     """
-    Run Mask2Former semantic segmentation.
+    Load the SAM model and return a SamPredictor.
+
+    Parameters
+    ----------
+    checkpoint : path to the SAM weights (e.g. sam_vit_h_4b8939.pth)
+    model_type : model variant ('vit_h', 'vit_l', 'vit_b')
 
     Returns
     -------
-    seg_map : (H, W) int array of ADE20K class IDs
+    SamPredictor instance
     """
-    image_rgb = Image.fromarray(cv2.cvtColor(image_bgr, cv2.COLOR_BGR2RGB))
-    inputs = processor(images=image_rgb, return_tensors="pt").to(device)
-    with torch.no_grad():
-        outputs = model(**inputs)
-    result = processor.post_process_semantic_segmentation(
-        outputs, target_sizes=[image_rgb.size[::-1]]
-    )[0]
-    return result.cpu().numpy()
+    from segment_anything import sam_model_registry, SamPredictor
+
+    device = "cuda" if torch.cuda.is_available() else "cpu"
+    sam = sam_model_registry[model_type](checkpoint=str(checkpoint))
+    sam.to(device=device)
+    predictor = SamPredictor(sam)
+    print(f"SAM loaded  |  device={device}  |  type={model_type}  |  weights={checkpoint}")
+    return predictor
 
 
-def m2f_extract_mask(seg_map: np.ndarray, label_ids: list[int]) -> np.ndarray:
-    """Extract binary mask (0/255) for given ADE20K label IDs."""
-    mask = np.zeros_like(seg_map, dtype=np.uint8)
-    for lid in label_ids:
-        mask[seg_map == lid] = 255
-    return mask
-
-
-# ─────────────────────────────────────────────────────────────────────
-# COMBINED MASK  (local model + Mask2Former)
-# ─────────────────────────────────────────────────────────────────────
-
-def generate_combined_mask(
+def generate_sam_mask(
     image_bgr: np.ndarray,
     predictor: DefaultPredictor,
-    m2f_processor,
-    m2f_model,
-    m2f_device,
+    sam_predictor,
     target_classes: list[int] | None = None,
-    m2f_include_ids: list[int] | None = None,
-    m2f_floor_id: int = M2F_FLOOR_ID,
 ) -> dict:
     """
-    Generate a refined countertop mask by combining two models.
+    Generate precise masks using Detectron2 boxes → SAM refinement.
 
-    Strategy
-    --------
-    1. local_mask  = Detectron2 countertop predictions
-    2. m2f_mask    = Mask2Former countertop/cabinet/island semantic mask
-    3. m2f_floor   = Mask2Former floor semantic mask
-    4. combined    = (local_mask  &  m2f_mask)  &  ~m2f_floor
+    Flow
+    ----
+    1. Run Detectron2 → bounding boxes + class predictions
+    2. Feed each box to SAM for pixel-precise mask
+    3. Merge masks belonging to target classes
 
-    Only pixels that BOTH models agree on are kept (AND gate).
-    Floor pixels are then subtracted as a safety net.
+    Parameters
+    ----------
+    image_bgr      : (H, W, 3) BGR image
+    predictor       : Detectron2 DefaultPredictor
+    sam_predictor   : SAM SamPredictor
+    target_classes  : class indices to include (default: config.TARGET_CLASSES)
 
     Returns
     -------
     dict with keys:
-        'local_mask', 'm2f_mask', 'm2f_floor', 'combined',
-        'instances', 'seg_map'
+        'sam_mask'     : (H, W) uint8, merged SAM mask for target classes (0/255)
+        'all_masks'    : list of (H, W) bool masks from SAM (one per detection)
+        'all_classes'  : int array of class IDs per detection
+        'boxes'        : (N, 4) float array of bounding boxes
+        'scores'       : (N,) float array of confidence scores
+        'instances'    : Detectron2 Instances (for visualization)
     """
     if target_classes is None:
         target_classes = TARGET_CLASSES
-    if m2f_include_ids is None:
-        m2f_include_ids = M2F_INCLUDE_IDS
 
-    # 1. Local Detectron2 model
-    local_mask, instances = generate_mask(image_bgr, predictor, target_classes)
-    local_mask = clean_mask(local_mask)
+    # 1. Detectron2 inference → boxes + classes
+    outputs = predictor(image_bgr)
+    instances = outputs["instances"].to("cpu")
 
-    # 2. Mask2Former ADE20K
-    seg_map = m2f_segment(image_bgr, m2f_processor, m2f_model, m2f_device)
-    m2f_mask = m2f_extract_mask(seg_map, m2f_include_ids)
-    m2f_mask = clean_mask(m2f_mask)
-    m2f_floor = m2f_extract_mask(seg_map, [m2f_floor_id])
+    boxes   = instances.pred_boxes.tensor.numpy()
+    classes = instances.pred_classes.numpy()
+    scores  = instances.scores.numpy()
 
-    # 3. Combine: INTERSECTION of both masks (AND), then subtract floor
-    combined = np.minimum(local_mask, m2f_mask)   # AND gate
-    combined[m2f_floor > 0] = 0                    # remove floor false-positives
-    combined = clean_mask(combined)                 # clean up edges
+    h, w = image_bgr.shape[:2]
+
+    # 2. SAM refinement: feed each box
+    sam_predictor.set_image(image_bgr)
+
+    all_masks = []
+    all_classes = []
+    merged_mask = np.zeros((h, w), dtype=np.uint8)
+
+    for i, box in enumerate(boxes):
+        input_box = np.array(box)
+        masks_sam, _scores_sam, _logits = sam_predictor.predict(
+            box=input_box[None, :],
+            multimask_output=False,
+        )
+        mask_bool = masks_sam[0]  # (H, W) bool
+        all_masks.append(mask_bool)
+        all_classes.append(classes[i])
+
+        # Merge into target mask
+        if classes[i] in target_classes:
+            merged_mask[mask_bool] = 255
+
+    merged_mask = clean_mask(merged_mask)
 
     return {
-        "local_mask": local_mask,
-        "m2f_mask":   m2f_mask,
-        "m2f_floor":  m2f_floor,
-        "combined":   combined,
-        "instances":  instances,
-        "seg_map":    seg_map,
+        "sam_mask":    merged_mask,
+        "all_masks":   all_masks,
+        "all_classes":  np.array(all_classes),
+        "boxes":        boxes,
+        "scores":       scores,
+        "instances":    instances,
     }
+
+
+
 
 
 def save_preview(
@@ -270,59 +268,77 @@ def save_preview(
     print(f"  Preview saved: {output_path}")
 
 
-def save_combined_preview(
+def save_sam_preview(
     image_bgr: np.ndarray,
     result: dict,
     output_path: Path,
 ) -> None:
     """
-    Save a 6-panel comparison preview:
-    Row 1: Original | Local Mask | Mask2Former Mask
-    Row 2: Floor Mask (excluded) | Combined Final | Final Overlay
+    Save a SAM-specific preview with colored instance overlays.
+
+    Layout: Original | SAM Mask | SAM Overlay (colored per instance) | Final Overlay
     """
     import matplotlib
     matplotlib.use("Agg")
     import matplotlib.pyplot as plt
 
     image_rgb = cv2.cvtColor(image_bgr, cv2.COLOR_BGR2RGB)
-    local_mask = result["local_mask"]
-    m2f_mask   = result["m2f_mask"]
-    m2f_floor  = result["m2f_floor"]
-    combined   = result["combined"]
+    sam_mask   = result["sam_mask"]
+    all_masks  = result["all_masks"]
+    all_classes = result["all_classes"]
+    boxes      = result["boxes"]
 
-    fig, axes = plt.subplots(2, 3, figsize=(24, 10))
+    fig, axes = plt.subplots(1, 4, figsize=(32, 6))
 
-    # Row 1
-    axes[0, 0].imshow(image_rgb)
-    axes[0, 0].set_title("Original")
-    axes[0, 0].axis("off")
+    # 1 — Original
+    axes[0].imshow(image_rgb)
+    axes[0].set_title("Original")
+    axes[0].axis("off")
 
-    axes[0, 1].imshow(local_mask, cmap="gray")
-    axes[0, 1].set_title(f"Local Model ({np.count_nonzero(local_mask)} px)")
-    axes[0, 1].axis("off")
+    # 2 — SAM mask (binary, target classes only)
+    axes[1].imshow(sam_mask, cmap="gray")
+    axes[1].set_title(f"SAM Mask ({np.count_nonzero(sam_mask)} px)")
+    axes[1].axis("off")
 
-    axes[0, 2].imshow(m2f_mask, cmap="gray")
-    axes[0, 2].set_title(f"Mask2Former ({np.count_nonzero(m2f_mask)} px)")
-    axes[0, 2].axis("off")
-
-    # Row 2
-    axes[1, 0].imshow(m2f_floor, cmap="Reds")
-    axes[1, 0].set_title(f"Floor (excluded, {np.count_nonzero(m2f_floor)} px)")
-    axes[1, 0].axis("off")
-
-    axes[1, 1].imshow(combined, cmap="gray")
-    axes[1, 1].set_title(f"Combined Final ({np.count_nonzero(combined)} px)")
-    axes[1, 1].axis("off")
-
+    # 3 — Colored overlay (all instances) with class labels
+    color_palette = [
+        (0, 255, 0), (255, 0, 0), (0, 0, 255),
+        (255, 255, 0), (255, 0, 255), (0, 255, 255),
+    ]
     overlay = image_rgb.copy()
-    overlay[combined > 0] = [255, 50, 50]
-    blended = cv2.addWeighted(image_rgb, 0.6, overlay, 0.4, 0)
-    axes[1, 2].imshow(blended)
-    axes[1, 2].set_title("Final Overlay")
-    axes[1, 2].axis("off")
+    for i, mask_bool in enumerate(all_masks):
+        color = color_palette[i % len(color_palette)]
+        colored = np.zeros_like(image_rgb, dtype=np.uint8)
+        colored[mask_bool] = color
+        overlay = cv2.addWeighted(overlay, 1, colored, 0.45, 0)
+
+        # Contour
+        contours, _ = cv2.findContours(
+            mask_bool.astype(np.uint8), cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE
+        )
+        cv2.drawContours(overlay, contours, -1, (255, 255, 255), 2)
+
+        # Class label
+        if i < len(boxes):
+            x1, y1 = boxes[i][:2].astype(int)
+            cls_name = CLASS_NAMES[all_classes[i]] if all_classes[i] < len(CLASS_NAMES) else f"cls_{all_classes[i]}"
+            cv2.putText(overlay, cls_name, (x1, max(y1 - 8, 15)),
+                        cv2.FONT_HERSHEY_SIMPLEX, 0.7, (255, 255, 255), 2)
+
+    axes[2].imshow(overlay)
+    axes[2].set_title(f"SAM Instances ({len(all_masks)})")
+    axes[2].axis("off")
+
+    # 4 — Final overlay
+    final_overlay = image_rgb.copy()
+    final_overlay[sam_mask > 0] = [255, 50, 50]
+    blended = cv2.addWeighted(image_rgb, 0.6, final_overlay, 0.4, 0)
+    axes[3].imshow(blended)
+    axes[3].set_title(f"Final Overlay ({np.count_nonzero(sam_mask)} px)")
+    axes[3].axis("off")
 
     plt.suptitle(output_path.stem, fontsize=14, fontweight="bold")
     plt.tight_layout()
     plt.savefig(output_path, dpi=150)
     plt.close()
-    print(f"  Combined preview saved: {output_path}")
+    print(f"  SAM preview saved: {output_path}")

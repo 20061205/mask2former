@@ -2,7 +2,7 @@
 Configuration for countertop mask generation.
 Uses two models:
   1. Local Detectron2 Mask R-CNN  (trained on custom kitchen dataset)
-  2. Mask2Former ADE20K semantic  (pre-trained, broad scene understanding)
+  2. SAM (Segment Anything Model) – refines Detectron2 boxes into precise masks
 """
 
 from pathlib import Path
@@ -11,6 +11,12 @@ from pathlib import Path
 MODEL_WEIGHTS = Path(__file__).parent / "model_final.pth"
 INPUT_DIR     = Path(__file__).parent.parent / "rooms" / "kitchens"
 OUTPUT_DIR    = Path(__file__).parent / "masks"
+
+# ═══════════════════════════════════════════════════════════════════════
+# SAM (Segment Anything Model)
+# ═══════════════════════════════════════════════════════════════════════
+SAM_CHECKPOINT  = Path(__file__).parent / "sam_vit_h_4b8939.pth"
+SAM_MODEL_TYPE  = "vit_h"
 
 # ═══════════════════════════════════════════════════════════════════════
 # LOCAL DETECTRON2 MODEL (custom-trained)
@@ -25,20 +31,6 @@ CLASS_NAMES = ["cabinet", "countertop", "floor", "wall"]
 
 # Which local model classes to include in the countertop mask
 TARGET_CLASSES = [2]  # 2 = countertop
-
-# ═══════════════════════════════════════════════════════════════════════
-# MASK2FORMER ADE20K MODEL (pre-trained)
-# ═══════════════════════════════════════════════════════════════════════
-M2F_MODEL_NAME = "facebook/mask2former-swin-base-ade-semantic"
-
-# ADE20K label IDs for countertop-related surfaces (to INCLUDE)
-M2F_COUNTERTOP_IDS = [70, 45, 73]   # countertop, table, kitchen_island
-M2F_CABINET_IDS    = [10]            # cabinet
-M2F_INCLUDE_IDS    = M2F_COUNTERTOP_IDS + M2F_CABINET_IDS  # combined include
-
-# ADE20K label IDs to EXCLUDE (used to remove false positives)
-M2F_FLOOR_ID  = 3
-M2F_WALL_ID   = 0
 
 # ═══════════════════════════════════════════════════════════════════════
 # MASK CLEANING
