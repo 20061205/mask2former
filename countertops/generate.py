@@ -9,6 +9,14 @@ Usage
   python -m countertops.generate --preview
   python -m countertops.generate --image rooms/kitchens/kit1.jpg --preview
 
+  # Comparison visualization (MaskRCNN vs SAM side-by-side)
+  python -m countertops.generate --image rooms/kitchens/kit1.jpg --comparison
+  python -m countertops.generate --input rooms/kitchens --comparison
+
+  # SAM countertop labels (numbered instances only)
+  python -m countertops.generate --image rooms/kitchens/kit1.jpg --sam-labels
+  python -m countertops.generate --input rooms/kitchens --sam-labels
+
   # Local model only (faster, no SAM)
   python -m countertops.generate --mode local --preview
 """
@@ -28,18 +36,22 @@ from .mask_generator import (
     load_sam,
     generate_sam_mask,
     save_sam_preview,
+    visualize_maskrcnn_and_sam,
+    visualize_sam_countertop_labels,
 )
 
 
 def process_image(img_path: Path, predictor, output_dir: Path, preview: bool,
-                   sam_pred=None, mode="sam"):
+                   sam_pred=None, mode="sam", comparison=False, sam_labels=False):
     """
     Run inference on one image and save the mask.
 
     Parameters
     ----------
-    sam_pred : SamPredictor or None
-    mode     : 'sam' | 'local'
+    sam_pred   : SamPredictor or None
+    mode       : 'sam' | 'local'
+    comparison : if True, create comprehensive MaskRCNN+SAM comparison visualization
+    sam_labels : if True, create SAM countertop labels visualization
     """
     print(f"\nProcessing: {img_path.name}  (mode={mode})")
 
@@ -50,9 +62,38 @@ def process_image(img_path: Path, predictor, output_dir: Path, preview: bool,
 
     sam_result = None
 
-    if mode == "sam" and sam_pred is not None:
+    # If SAM labels mode, generate labeled countertop visualization
+    if sam_labels and mode == "sam" and sam_pred is not None:
+        labels_path = output_dir / f"{img_path.stem}_sam_labels.png"
+        sam_result = visualize_sam_countertop_labels(
+            image_bgr=image_bgr,
+            predictor=predictor,
+            sam_predictor=sam_pred,
+            output_path=labels_path,
+        )
+        final_mask = sam_result["sam_mask"]
+        instances = sam_result["instances"]
+        
+        print(f"  SAM labels visualization saved: {labels_path}")
+
+    # If comparison mode, generate comprehensive visualization
+    elif comparison and mode == "sam" and sam_pred is not None:
+        comparison_path = output_dir / f"{img_path.stem}_comparison.png"
+        result_dict = visualize_maskrcnn_and_sam(
+            image_bgr=image_bgr,
+            predictor=predictor,
+            sam_predictor=sam_pred,
+            output_path=comparison_path,
+        )
+        final_mask = result_dict["sam_result"]["sam_mask"]
+        instances = result_dict["sam_result"]["instances"]
+        sam_result = result_dict["sam_result"]
+        
+        print(f"  Comparison visualization saved: {comparison_path}")
+
+    elif mode == "sam" and sam_pred is not None:
         # ── SAM mode: Detectron2 boxes → SAM masks ──
-        sam_result = generate_sam_mask(image_bgr, predictor, sam_pred)
+        sam_result = generate_sam_mask(image_bgr, predictor, sam_pred, filter_non_countertops=True)
         final_mask = sam_result["sam_mask"]
         instances = sam_result["instances"]
 
@@ -77,8 +118,8 @@ def process_image(img_path: Path, predictor, output_dir: Path, preview: bool,
     cv2.imwrite(str(mask_path), final_mask)
     print(f"  Mask saved: {mask_path}  ({np.count_nonzero(final_mask)} white px)")
 
-    # Optional preview
-    if preview:
+    # Optional preview (only if not in comparison or sam_labels mode)
+    if preview and not comparison and not sam_labels:
         if sam_result is not None:
             preview_path = output_dir / f"{img_path.stem}_sam_preview.png"
             save_sam_preview(image_bgr, sam_result, preview_path)
@@ -99,6 +140,10 @@ def main():
                         help="Detection confidence threshold")
     parser.add_argument("--preview", action="store_true",
                         help="Save preview images alongside masks")
+    parser.add_argument("--comparison", action="store_true",
+                        help="Generate comprehensive MaskRCNN vs SAM comparison visualization")
+    parser.add_argument("--sam-labels", action="store_true",
+                        help="Generate SAM countertop labels visualization (numbered instances)")
     parser.add_argument("--mode", choices=["sam", "local"],
                         default="sam",
                         help="sam=Detectron2+SAM (default), local=Detectron2 only")
@@ -114,10 +159,15 @@ def main():
         sam_pred = load_sam()
 
     print(f"\nMode: {args.mode}")
+    if args.comparison:
+        print("Comparison mode: Enabled (generates MaskRCNN vs SAM visualization)")
+    if args.sam_labels:
+        print("SAM Labels mode: Enabled (generates numbered countertop instances)")
 
     if args.image:
         process_image(args.image, predictor, args.output, args.preview,
-                      sam_pred=sam_pred, mode=args.mode)
+                      sam_pred=sam_pred, mode=args.mode, comparison=args.comparison,
+                      sam_labels=args.sam_labels)
     else:
         exts = ("*.jpg", "*.jpeg", "*.png")
         image_paths = []
@@ -127,7 +177,8 @@ def main():
 
         for img_path in image_paths:
             process_image(img_path, predictor, args.output, args.preview,
-                          sam_pred=sam_pred, mode=args.mode)
+                          sam_pred=sam_pred, mode=args.mode, comparison=args.comparison,
+                          sam_labels=args.sam_labels)
 
     print(f"\nDone! Masks saved to: {args.output}")
 

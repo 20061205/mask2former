@@ -10,13 +10,17 @@ Usage
          --tile tiles/tile1.jpg \
          --mask countertops/masks/kit4_countertop_mask.png
 
-  # Generate mask on-the-fly (combined mode) and apply tile
+  # Generate mask on-the-fly (SAM only) and apply tile
   python -m countertops.apply_tile --room rooms/kitchens/kit4.jpg \
          --tile tiles/tile1.jpg --live
 
+  # Generate combined mask (SAM + Mask2Former AND gate) and apply tile
+  python -m countertops.apply_tile --room rooms/kitchens/kit4.jpg \
+         --tile tiles/tile1.jpg --combined
+
   # Customise tile size, grout, rotation
   python -m countertops.apply_tile --room rooms/kitchens/kit4.jpg \
-         --tile "tiles/granite tile.jpg" --live \
+         --tile "tiles/granite tile.jpg" --combined \
          --tile-size 400 --grout 3 --rotation 5
 """
 
@@ -55,9 +59,13 @@ def main():
                         help="Path to tile texture image")
     parser.add_argument("--mask", type=Path, default=None,
                         help="Path to pre-generated countertop mask PNG. "
-                             "If omitted, use --live to generate on the fly.")
+                             "If omitted, use --live (SAM only) or --combined (SAM + Mask2Former).")
     parser.add_argument("--live", action="store_true",
-                        help="Generate combined mask live (requires both models)")
+                        help="Generate SAM mask live (Detectron2 + SAM)")
+    parser.add_argument("--combined", action="store_true",
+                        help="Generate combined AND mask (SAM + Mask2Former) for highest accuracy")
+    parser.add_argument("--surfaces", nargs="+", default=["countertop", "table", "cabinet"],
+                        help="Surfaces for Mask2Former in --combined mode (default: countertop table cabinet)")
     parser.add_argument("--output", type=Path, default=None,
                         help="Output image path (default: countertops/masks/<room>_tiled.png)")
     parser.add_argument("--tile-size", type=int, default=TILE_SIZE,
@@ -84,6 +92,54 @@ def main():
         if mask is None:
             raise FileNotFoundError(f"Cannot read mask: {args.mask}")
         print(f"Mask : {args.mask}  ({np.count_nonzero(mask)} white px)")
+    
+    elif args.combined:
+        print("Generating combined AND mask (SAM + Mask2Former)...")
+        print(f"  Surfaces: {', '.join(args.surfaces)}")
+        
+        from .mask_generator import (
+            build_predictor,
+            load_sam,
+            visualize_three_model_masks,
+        )
+        from model import load_model
+        
+        # Load all 3 models
+        print("  Loading models...")
+        predictor = build_predictor(confidence=args.confidence)
+        sam_pred = load_sam()
+        mask2former_processor, mask2former_model, mask2former_device = load_model()
+        
+        # Generate combined mask
+        print("  Running inference...")
+        OUTPUT_DIR.mkdir(parents=True, exist_ok=True)
+        comparison_path = OUTPUT_DIR / f"{args.room.stem}_3model_comparison.jpg"
+        
+        result = visualize_three_model_masks(
+            image_bgr=room_bgr,
+            predictor=predictor,
+            sam_predictor=sam_pred,
+            mask2former_processor=mask2former_processor,
+            mask2former_model=mask2former_model,
+            mask2former_device=mask2former_device,
+            output_path=comparison_path,
+            surface_names=args.surfaces,
+            filter_sam=True,
+        )
+        
+        # Use the combined AND mask
+        mask = result["combined_result"]["mask"]
+        combined_pixels = result["combined_result"]["pixels"]
+        combined_pct = result["combined_result"]["percentage"]
+        
+        print(f"  ✓ Combined AND mask: {combined_pixels:,} pixels ({combined_pct:.1f}%)")
+        print(f"  ✓ 3-model comparison saved: {comparison_path}")
+        
+        # Save the combined mask separately
+        mask_path = OUTPUT_DIR / f"{args.room.stem}_combined_mask.png"
+        cv2.imwrite(str(mask_path), mask)
+        print(f"  ✓ Combined mask saved: {mask_path}")
+    
     elif args.live:
         print("Generating SAM mask (Detectron2 + SAM)...")
         from .mask_generator import (
@@ -93,7 +149,7 @@ def main():
         )
         predictor = build_predictor(confidence=args.confidence)
         sam_pred = load_sam()
-        result = generate_sam_mask(room_bgr, predictor, sam_pred)
+        result = generate_sam_mask(room_bgr, predictor, sam_pred, filter_non_countertops=True)
         mask = result["sam_mask"]
         print(f"Mask generated  ({np.count_nonzero(mask)} white px)")
 
@@ -102,8 +158,9 @@ def main():
         mask_path = OUTPUT_DIR / f"{args.room.stem}_countertop_mask.png"
         cv2.imwrite(str(mask_path), mask)
         print(f"Mask saved: {mask_path}")
+    
     else:
-        parser.error("Provide --mask <path> or use --live to generate one.")
+        parser.error("Provide --mask <path>, --live (SAM only), or --combined (SAM + Mask2Former).")
 
     # ── Resize mask if needed ────────────────────────────────────────
     if mask.shape[:2] != room_bgr.shape[:2]:
