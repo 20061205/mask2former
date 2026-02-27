@@ -3,11 +3,9 @@ from .mask_generator import (
     generate_mask,
     clean_mask,
     save_preview,
-    load_mask2former,
-    m2f_segment,
-    m2f_extract_mask,
-    generate_combined_mask,
-    save_combined_preview,
+    load_sam,
+    generate_sam_mask,
+    save_sam_preview,
 )
 from .config import CLASS_NAMES, TARGET_CLASSES
 
@@ -16,11 +14,9 @@ __all__ = [
     "generate_mask",
     "clean_mask",
     "save_preview",
-    "load_mask2former",
-    "m2f_segment",
-    "m2f_extract_mask",
-    "generate_combined_mask",
-    "save_combined_preview",
+    "load_sam",
+    "generate_sam_mask",
+    "save_sam_preview",
     "CLASS_NAMES",
     "TARGET_CLASSES",
 ]
