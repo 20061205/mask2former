@@ -26,6 +26,7 @@ DEFAULT_TILE_SIZE = 120
 DEFAULT_GROUT_WIDTH = 3
 DEFAULT_ROTATION_ANGLE = 0.0
 TILE_GRID_SCALE = 3        # oversized pattern multiplier
+DEFAULT_CAMERA_TILT = 0.1  # >1 = higher camera, stronger perspective
 
 
 # ── Mask cleaning defaults ───────────────────────────────────────────

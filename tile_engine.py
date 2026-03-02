@@ -23,6 +23,7 @@ from config import (
     DEFAULT_TILE_SIZE,
     DEFAULT_GROUT_WIDTH,
     TILE_GRID_SCALE,
+    DEFAULT_CAMERA_TILT,
 )
 
 
@@ -111,6 +112,47 @@ def extract_floor_polygon(mask: np.ndarray) -> np.ndarray | None:
           f"height={bot_y - top_y:.0f}  "
           f"perspective ratio={bot_w / max(top_w, 1):.2f}")
     return quad
+
+
+# =====================================================================
+# 1b. Camera tilt amplification
+# =====================================================================
+
+def _amplify_perspective(quad: np.ndarray, tilt: float) -> np.ndarray:
+    """
+    Simulate a higher / more tilted-down camera by narrowing the far
+    (top) edge of the floor quadrilateral.
+
+    In a real scene, tilting the camera upward makes the far end of
+    the floor appear proportionally narrower relative to the near end.
+    This function replicates that effect by pulling the top-left and
+    top-right corners toward the top-edge midpoint.
+
+    Parameters
+    ----------
+    quad : (4, 2) float32  –  TL, TR, BR, BL
+    tilt : float
+        1.0  = no change (use raw mask shape).
+        1.3  = mild upward tilt (default) – noticeable but natural.
+        1.5  = moderate – far tiles visibly smaller.
+        2.0+ = dramatic bird's-eye perspective.
+
+    Returns
+    -------
+    Adjusted (4, 2) float32 quad.
+    """
+    if tilt <= 1.0:
+        return quad
+
+    tl, tr, br, bl = quad
+    top_mid = (tl + tr) / 2.0
+
+    # Pull top corners toward the midpoint → narrower far edge
+    shrink = 1.0 / tilt
+    new_tl = top_mid + (tl - top_mid) * shrink
+    new_tr = top_mid + (tr - top_mid) * shrink
+
+    return np.float32([new_tl, new_tr, br, bl])
 
 
 # =====================================================================
@@ -436,6 +478,7 @@ def build_full_tile_grid(
     scale: int = TILE_GRID_SCALE,
     tile_w: int | None = None,
     tile_h: int | None = None,
+    camera_tilt: float = DEFAULT_CAMERA_TILT,
 ) -> np.ndarray:
     """
     Create a **perspective-correct, homography-warped** tile grid that
@@ -464,6 +507,16 @@ def build_full_tile_grid(
     # ── 1. Extract floor quadrilateral ───────────────────────────────
     floor_quad = extract_floor_polygon(surface_mask)
     use_homography = floor_quad is not None
+
+    # ── 1b. Amplify perspective to simulate higher camera ────────────
+    if use_homography and camera_tilt > 1.0:
+        floor_quad = _amplify_perspective(floor_quad, camera_tilt)
+        tl, tr, br, bl = floor_quad
+        far_w  = float(np.linalg.norm(tr - tl))
+        near_w = float(np.linalg.norm(br - bl))
+        print(f"  Camera tilt {camera_tilt:.1f}× applied  │  "
+              f"far-edge → {far_w:.0f} px  near-edge → {near_w:.0f} px  "
+              f"ratio {near_w / max(far_w, 1):.1f}×")
 
     # ── 2. Decide canvas size ────────────────────────────────────────
     if use_homography:

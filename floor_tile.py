@@ -31,7 +31,7 @@ import matplotlib.pyplot as plt
 import numpy as np
 from PIL import Image
 
-from config import SURFACE_IDS, DEFAULT_SURFACES, DEFAULT_ROTATION_ANGLE
+from config import SURFACE_IDS, DEFAULT_SURFACES, DEFAULT_ROTATION_ANGLE, DEFAULT_CAMERA_TILT
 from model import load_model, segment_image
 from surfaces import extract_all_masks, combine_masks
 from tile_engine import (
@@ -88,6 +88,8 @@ def main():
     )
     parser.add_argument("--rotation", type=float, default=DEFAULT_ROTATION_ANGLE,
                         help="Tile rotation angle in degrees")
+    parser.add_argument("--camera-tilt", type=float, default=DEFAULT_CAMERA_TILT,
+                        help="Camera tilt factor (1.0=flat, 1.3=default, 2.0=strong perspective)")
     parser.add_argument("--outdir", default="outputs", help="Output directory")
     parser.add_argument("--debug", action="store_true",
                         help="Save intermediate debug images")
@@ -167,6 +169,7 @@ def main():
         rotation_angle=args.rotation,
         tile_w=tile_w_px,
         tile_h=tile_h_px,
+        camera_tilt=args.camera_tilt,
     )
 
     if args.debug:
