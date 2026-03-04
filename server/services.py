@@ -14,13 +14,13 @@ ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(ROOT))
 
 from model import load_model, segment_image
-from surfaces import extract_all_masks, combine_masks
-from tile_engine import (
+from floor.surfaces import extract_all_masks, combine_masks
+from floor.tile_engine import (
     build_full_tile_grid,
     composite_tile_on_surface,
     calculate_tile_pixel_size,
 )
-from config import SURFACE_IDS, DEFAULT_CAMERA_TILT
+from floor.config import SURFACE_IDS, DEFAULT_CAMERA_TILT
 
 
 # ── Upload storage ───────────────────────────────────────────────────

@@ -31,10 +31,10 @@ import matplotlib.pyplot as plt
 import numpy as np
 from PIL import Image
 
-from config import SURFACE_IDS, DEFAULT_SURFACES, DEFAULT_ROTATION_ANGLE, DEFAULT_CAMERA_TILT
+from floor.config import SURFACE_IDS, DEFAULT_SURFACES, DEFAULT_ROTATION_ANGLE, DEFAULT_CAMERA_TILT
 from model import load_model, segment_image
-from surfaces import extract_all_masks, combine_masks
-from tile_engine import (
+from floor.surfaces import extract_all_masks, combine_masks
+from floor.tile_engine import (
     build_full_tile_grid,
     composite_tile_on_surface,
     calculate_tile_pixel_size,

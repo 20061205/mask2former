@@ -19,7 +19,7 @@ the CLI (``floor_tile.py``) and the FastAPI server.
 import cv2
 import numpy as np
 
-from config import (
+from floor.config import (
     DEFAULT_TILE_SIZE,
     DEFAULT_GROUT_WIDTH,
     TILE_GRID_SCALE,

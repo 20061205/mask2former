@@ -58,18 +58,12 @@ python floor_tile.py --room rooms/room1.jpg --tile tiles/tile1.jpg
 Provide floor area (in **feet**) and tile size (in **inches**):
 
 ```bash
-python floor_tile.py --room rooms/room1.jpg --tile tiles/tile3.jpg --floor-width 10 --floor-length 12 --tile-width 24 --tile-height 24
+python -m floor.floor_tile --room rooms/room2.jpg --tile tiles/tile8.jpg --floor-width 10 --floor-length 12
+ --tile-width 24 --tile-height 12
 ```
 
 This computes exactly how many tiles fit (e.g. 10′×12′ floor with 24″×24″ tiles → 5×6 = 30 tiles) and sizes each tile in pixels to match.
 
-### With rotation
-
-```bash
-python floor_tile.py --room rooms/room1.jpg --tile tiles/tile1.jpg --rotation 15
-```
-
-> **Note:** Rotation is automatically disabled when using real-world dimensions to preserve the accurate tile count.
 
 ---
 

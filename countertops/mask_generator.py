@@ -901,7 +901,7 @@ def visualize_three_model_masks(
     from PIL import Image
     import sys
     sys.path.insert(0, str(Path(__file__).parent.parent))
-    from surfaces import extract_surface_mask, clean_mask as clean_m2f_mask
+    from floor.surfaces import extract_surface_mask, clean_mask as clean_m2f_mask
 
     if target_classes is None:
         target_classes = TARGET_CLASSES

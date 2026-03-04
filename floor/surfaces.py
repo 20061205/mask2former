@@ -5,7 +5,7 @@ Surface mask extraction and cleaning for each tileable surface type.
 import cv2
 import numpy as np
 
-from config import SURFACE_IDS, MASK_KERNEL_SIZE, MASK_CLOSE_ITERATIONS
+from floor.config import SURFACE_IDS, MASK_KERNEL_SIZE, MASK_CLOSE_ITERATIONS
 
 
 def extract_surface_mask(segmentation_map: np.ndarray, surface_name: str) -> np.ndarray:
