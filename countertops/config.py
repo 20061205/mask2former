@@ -46,6 +46,7 @@ TILE_SIZE           = 100           # tile cell size in pixels (slab-like)
 GROUT_WIDTH         = 2             # thin grout for countertop slab look
 ROTATION_ANGLE      = 10.0           # tile rotation angle (degrees)
 TILE_GRID_SCALE     = 3             # oversized pattern multiplier
+CAMERA_TILT         = 1.3           # perspective amplifier (1.0=flat, 1.3=natural)
 FEATHER_RADIUS      = 11            # edge blending radius
 SHADOW_BASE         = 0.65          # edge shadow darkening (0=black, 1=none)
 HIGHLIGHT_STRENGTH  = 0.30          # how much original specular to keep
