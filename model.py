@@ -7,7 +7,7 @@ import torch
 from PIL import Image
 from transformers import AutoImageProcessor, Mask2FormerForUniversalSegmentation
 
-from config import MODEL_NAME
+from floor.config import MODEL_NAME
 
 
 def load_model(model_name: str = MODEL_NAME):

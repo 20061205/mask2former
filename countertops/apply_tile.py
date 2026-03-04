@@ -37,9 +37,11 @@ from .config import (
     TILE_SIZE,
     GROUT_WIDTH,
     ROTATION_ANGLE,
+    CAMERA_TILT,
     CONFIDENCE,
 )
 from .tile_applicator import apply_tile, save_tile_preview
+from model import load_model
 
 
 def load_image(path: Path) -> np.ndarray:
@@ -74,6 +76,9 @@ def main():
                         help=f"Grout line width (default: {GROUT_WIDTH})")
     parser.add_argument("--rotation", type=float, default=ROTATION_ANGLE,
                         help=f"Tile rotation angle in degrees (default: {ROTATION_ANGLE})")
+    parser.add_argument("--camera-tilt", type=float, default=CAMERA_TILT,
+                        help=f"Perspective amplifier (1.0=flat, 1.3=natural, 2.0=strong) "
+                             f"(default: {CAMERA_TILT})")
     parser.add_argument("--confidence", type=float, default=CONFIDENCE,
                         help=f"Detection confidence for live mode (default: {CONFIDENCE})")
     parser.add_argument("--preview", action="store_true",
@@ -102,7 +107,7 @@ def main():
             load_sam,
             visualize_three_model_masks,
         )
-        from model import load_model
+        
         
         # Load all 3 models
         print("  Loading models...")
@@ -175,6 +180,7 @@ def main():
         tile_size=args.tile_size,
         grout=args.grout,
         rotation=args.rotation,
+        camera_tilt=args.camera_tilt,
     )
 
     # ── Save output ──────────────────────────────────────────────────

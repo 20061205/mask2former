@@ -14,13 +14,13 @@ ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(ROOT))
 
 from model import load_model, segment_image
-from surfaces import extract_all_masks, combine_masks
-from tile_engine import (
+from floor.surfaces import extract_all_masks, combine_masks
+from floor.tile_engine import (
     build_full_tile_grid,
     composite_tile_on_surface,
     calculate_tile_pixel_size,
 )
-from config import SURFACE_IDS
+from floor.config import SURFACE_IDS, DEFAULT_CAMERA_TILT
 
 
 # ── Upload storage ───────────────────────────────────────────────────
@@ -75,6 +75,7 @@ def apply_tiles(
     floor_length: float | None = None,
     tile_width: float | None = None,
     tile_height: float | None = None,
+    camera_tilt: float = DEFAULT_CAMERA_TILT,
 ) -> tuple[bytes, dict | None]:
     """
     Run the full pipeline and return (result_png_bytes, dimension_info | None).
@@ -116,6 +117,7 @@ def apply_tiles(
         room_bgr, combined_mask, tile_bgr,
         rotation_angle=rotation,
         tile_w=tile_w_px, tile_h=tile_h_px,
+        camera_tilt=camera_tilt,
     )
     result_bgr = composite_tile_on_surface(room_bgr, combined_mask, full_tile)
 

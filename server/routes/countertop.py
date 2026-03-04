@@ -34,6 +34,7 @@ async def apply_countertop_tile(
     tile_size: int = Form(600, description="Tile size in pixels"),
     grout: int = Form(2),
     rotation: float = Form(10.0),
+    camera_tilt: float = Form(1.3, description="Perspective strength (1.0=flat, 1.3=natural)"),
 ):
     """Generate countertop mask on-the-fly and apply tile. Returns PNG."""
     from countertops.mask_generator import generate_sam_mask
@@ -49,7 +50,8 @@ async def apply_countertop_tile(
     mask = result["sam_mask"]
 
     out = apply_tile(room_bgr, mask, tile_bgr,
-                     tile_size=tile_size, grout=grout, rotation=rotation)
+                     tile_size=tile_size, grout=grout, rotation=rotation,
+                     camera_tilt=camera_tilt)
 
     _, png = cv2.imencode(".png", out, [cv2.IMWRITE_PNG_COMPRESSION, 3])
     return Response(content=png.tobytes(), media_type="image/png")
@@ -62,6 +64,7 @@ async def apply_countertop_tile_json(
     tile_size: int = Form(600),
     grout: int = Form(2),
     rotation: float = Form(10.0),
+    camera_tilt: float = Form(1.3, description="Perspective strength (1.0=flat, 1.3=natural)"),
 ):
     """Apply countertop tile and return JSON metadata."""
     from countertops.mask_generator import generate_sam_mask
@@ -77,7 +80,8 @@ async def apply_countertop_tile_json(
     mask = result["sam_mask"]
 
     out = apply_tile(room_bgr, mask, tile_bgr,
-                     tile_size=tile_size, grout=grout, rotation=rotation)
+                     tile_size=tile_size, grout=grout, rotation=rotation,
+                     camera_tilt=camera_tilt)
 
     _, png = cv2.imencode(".png", out, [cv2.IMWRITE_PNG_COMPRESSION, 3])
 

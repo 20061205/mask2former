@@ -26,11 +26,8 @@ DEFAULT_TILE_SIZE = 120
 DEFAULT_GROUT_WIDTH = 3
 DEFAULT_ROTATION_ANGLE = 0.0
 TILE_GRID_SCALE = 3        # oversized pattern multiplier
+DEFAULT_CAMERA_TILT = 0.1  # >1 = higher camera, stronger perspective
 
-# ── Countertop-specific defaults ─────────────────────────────────────
-COUNTERTOP_TILE_SIZE = 600       # much larger tiles / slab look
-COUNTERTOP_GROUT_WIDTH = 2       # thinner grout for slab look
-COUNTERTOP_ROTATION_ANGLE = 10.0  # align with kitchen axes
 
 # ── Mask cleaning defaults ───────────────────────────────────────────
 MASK_KERNEL_SIZE = 5
