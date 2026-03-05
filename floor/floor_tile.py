@@ -1,26 +1,7 @@
 """
 CLI entry-point for Mask2Former tile visualisation.
+Supports real-world dimension-aware tile count .
 
-Supports multiple surfaces: floor, wall, countertop, stairway, cabinet, etc.
-Supports real-world dimension-aware tile count (floor area + tile size → exact grid).
-
-Usage examples
---------------
-  # Tile the floor only (default)
-  python pipeline.py --room room.jpg --tile tile.jpg
-
-  # Tile floor with real-world dimensions (10'×12' room, 24"×24" tiles → 60 tiles)
-  python pipeline.py --room room.jpg --tile tile.jpg \\
-      --floor-width 10 --floor-length 12 --tile-width 24 --tile-height 24
-
-  # Tile floor + stairway
-  python pipeline.py --room room.jpg --tile tile.jpg --surfaces floor stairway
-
-  # Tile kitchen countertop
-  python pipeline.py --room kitchen.jpg --tile marble.jpg --surfaces countertop
-
-  # List all available surface names
-  python pipeline.py --list-surfaces
 """
 
 import argparse
@@ -93,7 +74,7 @@ def main():
     parser.add_argument("--outdir", default="outputs", help="Output directory")
     parser.add_argument("--debug", action="store_true",
                         help="Save intermediate debug images")
-    parser.add_argument("--list-surfaces", action="store_true",
+    parser.add_argument("--list_surfaces", action="store_true",
                         help="Print available surface names and exit")
 
     # ── Real-world dimension args ────────────────────────────────────

@@ -437,29 +437,60 @@ def calculate_tile_pixel_size(
     tile_height_in: float,
 ) -> tuple[int, int, int, int]:
     """
-    Convert real-world tile dimensions to pixel sizes using the surface
-    mask's bounding box as the reference for the room's physical extent.
+    Convert real-world tile dimensions to pixel sizes.
+
+    Pixel sizes are computed against the **bird's-eye (flat) floor
+    extent** — not the perspective bounding box — because the tiled
+    texture is built on a flat canvas that is later warped.
+
+    The number of tiles across/down is determined solely from the
+    physical dimensions.  The pixel size of each tile is then chosen
+    so that those tiles fill the flat floor extent exactly.  This
+    means the result is **independent of the room size the user
+    provides** being a perfect match for the image — the tile *count*
+    is what the user controls; the pixel size auto-adapts to the mask.
 
     Returns ``(tile_w_px, tile_h_px, tiles_across, tiles_down)``.
     """
-    ys, xs = np.where(surface_mask > 0)
-    if len(xs) == 0 or len(ys) == 0:
-        raise ValueError("Empty surface mask – cannot compute tile size")
-
-    bbox_w = int(xs.max() - xs.min())
-    bbox_h = int(ys.max() - ys.min())
-
+    # ── Number of tiles from physical dimensions ─────────────────────
     tiles_across = floor_width_ft * 12 / tile_width_in
-    tiles_down = floor_length_ft * 12 / tile_height_in
+    tiles_down   = floor_length_ft * 12 / tile_height_in
 
-    tile_w_px = max(int(round(bbox_w / tiles_across)), 4)
-    tile_h_px = max(int(round(bbox_h / tiles_down)), 4)
+    # ── Flat floor extent from the mask quad (perspective-corrected) ──
+    floor_quad = extract_floor_polygon(surface_mask)
+    if floor_quad is not None:
+        flat_w, flat_h = _flat_floor_dimensions(floor_quad)
+        print(f"  Bird's-eye floor estimate: {flat_w:.0f} × {flat_h:.0f} px")
+    else:
+        # Fallback: use mask bounding box (less accurate)
+        ys, xs = np.where(surface_mask > 0)
+        if len(xs) == 0 or len(ys) == 0:
+            raise ValueError("Empty surface mask – cannot compute tile size")
+        flat_w = float(xs.max() - xs.min())
+        flat_h = float(ys.max() - ys.min())
+        print(f"  (fallback) Mask bbox: {flat_w:.0f} × {flat_h:.0f} px")
+
+    # ── Tile pixel size that fills the flat canvas ───────────────────
+    tile_w_px = max(int(round(flat_w / tiles_across)), 4)
+    tile_h_px = max(int(round(flat_h / tiles_down)), 4)
+
+    # Keep tile aspect ratio matching the real-world tile shape.
+    # If the floor quad aspect ratio disagrees with the stated room
+    # dimensions, adapt the tile size so the tile *shape* stays correct.
+    real_tile_aspect = tile_width_in / tile_height_in
+    pixel_tile_aspect = tile_w_px / max(tile_h_px, 1)
+    if abs(pixel_tile_aspect - real_tile_aspect) / max(real_tile_aspect, 0.01) > 0.15:
+        # Use the smaller dimension as the anchor and fix the other
+        avg_size = (tile_w_px + tile_h_px) / 2.0
+        tile_h_px = max(int(round(avg_size)), 4)
+        tile_w_px = max(int(round(tile_h_px * real_tile_aspect)), 4)
+        print(f"  Aspect-ratio correction applied (real tile {real_tile_aspect:.2f})")
 
     print(f"  Floor: {floor_width_ft}′ × {floor_length_ft}′  |  "
           f"Tile: {tile_width_in}″ × {tile_height_in}″")
     print(f"  Tiles needed: {tiles_across:.1f} across × {tiles_down:.1f} down")
     print(f"  Pixel tile size: {tile_w_px} × {tile_h_px} px  "
-          f"(mask bbox {bbox_w}×{bbox_h})")
+          f"(flat floor {flat_w:.0f}×{flat_h:.0f})")
 
     return tile_w_px, tile_h_px, int(np.ceil(tiles_across)), int(np.ceil(tiles_down))
 
