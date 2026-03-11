@@ -42,7 +42,7 @@ MASK_CLOSE_ITER     = 2
 # TILE APPLICATION
 # ═══════════════════════════════════════════════════════════════════════
 TILE_DIR            = Path(__file__).parent.parent / "tiles"
-TILE_SIZE           = 100           # tile cell size in pixels (slab-like)
+TILE_SIZE           = 1000           # tile cell size in pixels (slab-like)
 GROUT_WIDTH         = 2             # thin grout for countertop slab look
 ROTATION_ANGLE      = 10.0           # tile rotation angle (degrees)
 TILE_GRID_SCALE     = 3             # oversized pattern multiplier
