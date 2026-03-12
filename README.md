@@ -20,8 +20,11 @@ pip install -r requirements-lock.txt
 
 # Install detectron2 from source (required for countertop module)
 pip install git+https://github.com/facebookresearch/detectron2.git
-```
 
+
+```
+### Download MaskRCNN trained model
+https://drive.google.com/file/d/1DSjaFIUDXshydfe2-ZcS4-qfZRWEqaKx/view?usp=drive_link
 ---
 
 ## Quick Start
